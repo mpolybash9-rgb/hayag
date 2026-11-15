@@ -4,10 +4,216 @@ const path = require('path');
 const app = express();
 app.use(express.json());
 
-app.post('/api/public/visit', (req, res) => {
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://unpzkfulicjsmilqzwsm.supabase.co';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_4ciTGnntOEw_m1U_Llm2Cw_S8nRGkWE';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
+
+async function supabaseRequest(endpoint, { method = 'GET', body, token, useServiceKey = false } = {}) {
+  const headers = {
+    'apikey': useServiceKey ? SUPABASE_SERVICE_KEY : SUPABASE_ANON_KEY,
+    'Content-Type': 'application/json',
+  };
+  if (useServiceKey) {
+    headers['Authorization'] = `Bearer ${SUPABASE_SERVICE_KEY}`;
+  } else if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${SUPABASE_URL}${endpoint}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  try { return { ok: res.ok, status: res.status, data: JSON.parse(text) }; }
+  catch { return { ok: res.ok, status: res.status, data: text }; }
+}
+
+function getToken(req) {
+  const auth = req.headers.authorization;
+  if (auth && auth.startsWith('Bearer ')) return auth.slice(7);
+  return null;
+}
+
+// --- Visit tracking (save to Supabase) ---
+app.post('/api/public/visit', async (req, res) => {
+  try {
+    const { session_id, event_type, page, data } = req.body;
+    await supabaseRequest('/rest/v1/visitor_events', {
+      method: 'POST',
+      useServiceKey: true,
+      body: {
+        session_id: session_id || req.ip,
+        event_type: event_type || 'visit',
+        page: page || req.headers.referer || '/',
+        data: data || {},
+      },
+    });
+  } catch (e) {
+    console.error('Visit tracking error:', e.message);
+  }
   res.json({ ok: true });
 });
 
+// --- Admin API: list sub-accounts ---
+app.get('/api/admin/users', async (req, res) => {
+  const token = getToken(req);
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { data: user } = await supabaseRequest('/auth/v1/user', { token });
+  if (!user?.id) return res.status(401).json({ error: 'Invalid token' });
+
+  const roleCheck = await supabaseRequest(
+    `/rest/v1/user_roles?user_id=eq.${user.id}&role=eq.admin&select=role`,
+    { token }
+  );
+  if (!roleCheck.ok || !roleCheck.data?.length) {
+    return res.status(403).json({ error: 'Not admin' });
+  }
+
+  const result = await supabaseRequest(
+    '/rest/v1/user_roles?role=eq.viewer&select=user_id,role,created_at',
+    { useServiceKey: true }
+  );
+  if (!result.ok) return res.json([]);
+
+  const viewers = result.data || [];
+  const userIds = viewers.map(v => v.user_id);
+  if (!userIds.length) return res.json([]);
+
+  const profiles = await supabaseRequest(
+    `/rest/v1/admin_profiles?id=in.(${userIds.join(',')})&select=id,username,display_name`,
+    { useServiceKey: true }
+  );
+  const profileMap = {};
+  (profiles.data || []).forEach(p => { profileMap[p.id] = p; });
+
+  const users = viewers.map(v => ({
+    id: v.user_id,
+    username: profileMap[v.user_id]?.username || '',
+    display_name: profileMap[v.user_id]?.display_name || '',
+    created_at: v.created_at,
+  }));
+
+  res.json(users);
+});
+
+// --- Admin API: create sub-account ---
+app.post('/api/admin/users', async (req, res) => {
+  const token = getToken(req);
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { data: user } = await supabaseRequest('/auth/v1/user', { token });
+  if (!user?.id) return res.status(401).json({ error: 'Invalid token' });
+
+  const roleCheck = await supabaseRequest(
+    `/rest/v1/user_roles?user_id=eq.${user.id}&role=eq.admin&select=role`,
+    { token }
+  );
+  if (!roleCheck.ok || !roleCheck.data?.length) {
+    return res.status(403).json({ error: 'Not admin' });
+  }
+
+  const { username, password, displayName } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password required' });
+  }
+
+  const email = `${username.trim().toLowerCase()}@viewer.local`;
+  const createResult = await supabaseRequest('/auth/v1/admin/users', {
+    method: 'POST',
+    useServiceKey: true,
+    body: { email, password, email_confirm: true },
+  });
+
+  if (!createResult.ok) {
+    return res.status(400).json({ error: createResult.data?.msg || 'Failed to create user' });
+  }
+
+  const newUserId = createResult.data.id;
+
+  await supabaseRequest('/rest/v1/user_roles', {
+    method: 'POST',
+    useServiceKey: true,
+    body: { user_id: newUserId, role: 'viewer' },
+  });
+
+  await supabaseRequest('/rest/v1/admin_profiles', {
+    method: 'POST',
+    useServiceKey: true,
+    body: { id: newUserId, username: username.trim(), display_name: displayName || username.trim() },
+  });
+
+  res.json({ id: newUserId, username: username.trim(), display_name: displayName || username.trim() });
+});
+
+// --- Admin API: delete sub-account ---
+app.delete('/api/admin/users/:id', async (req, res) => {
+  const token = getToken(req);
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { data: user } = await supabaseRequest('/auth/v1/user', { token });
+  if (!user?.id) return res.status(401).json({ error: 'Invalid token' });
+
+  const roleCheck = await supabaseRequest(
+    `/rest/v1/user_roles?user_id=eq.${user.id}&role=eq.admin&select=role`,
+    { token }
+  );
+  if (!roleCheck.ok || !roleCheck.data?.length) {
+    return res.status(403).json({ error: 'Not admin' });
+  }
+
+  const targetId = req.params.id;
+
+  await supabaseRequest(`/rest/v1/user_roles?user_id=eq.${targetId}`, {
+    method: 'DELETE',
+    useServiceKey: true,
+  });
+  await supabaseRequest(`/rest/v1/admin_profiles?id=eq.${targetId}`, {
+    method: 'DELETE',
+    useServiceKey: true,
+  });
+  await supabaseRequest(`/auth/v1/admin/users/${targetId}`, {
+    method: 'DELETE',
+    useServiceKey: true,
+  });
+
+  res.json({ ok: true });
+});
+
+// --- Admin API: list visitor events ---
+app.get('/api/admin/visitors', async (req, res) => {
+  const token = getToken(req);
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const result = await supabaseRequest(
+    '/rest/v1/visitor_events?select=id,session_id,event_type,page,data,created_at&order=created_at.desc&limit=100',
+    { token }
+  );
+  res.json(result.data || []);
+});
+
+// --- Admin API: dashboard stats ---
+app.get('/api/admin/stats', async (req, res) => {
+  const token = getToken(req);
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const [visitors, users] = await Promise.all([
+    supabaseRequest('/rest/v1/visitor_events?select=id&limit=1000', { token }),
+    supabaseRequest('/rest/v1/user_roles?select=user_id&role=eq.viewer', { useServiceKey: true }),
+  ]);
+
+  res.json({
+    totalVisits: Array.isArray(visitors.data) ? visitors.data.length : 0,
+    totalUsers: Array.isArray(users.data) ? users.data.length : 0,
+  });
+});
+
+// --- TanStack server function stubs (return empty to prevent errors) ---
+app.all('/_serverFn/*', (req, res) => {
+  res.json([]);
+});
+
+// --- Static files ---
 app.use(express.static(path.join(__dirname), {
   extensions: ['html'],
   index: 'index.html',

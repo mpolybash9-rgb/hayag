@@ -238,7 +238,7 @@ app.post('/_serverFn/428289e6a95e5fae42a5f252fb057eb6b26d6cb43d7737969ee97f14a7d
   } catch (e) {
     console.error('Order save error:', e.message);
   }
-  res.json({ success: true });
+  res.json({ result: { success: true } });
 });
 
 // List orders: GET /_serverFn/9418c3d2...
@@ -248,15 +248,15 @@ app.get('/_serverFn/9418c3d23273642507e6287ab82fd85c0bb33aa9622d516d57217a46084a
     "/rest/v1/visitor_events?event_type=eq.order&select=id,data,created_at&order=created_at.desc&limit=50",
     { token: token || undefined }
   );
-  res.json(result.ok && Array.isArray(result.data) ? result.data : []);
+  res.json({ result: result.ok && Array.isArray(result.data) ? result.data : [] });
 });
 
 // Dashboard server functions - return safe defaults
 app.get('/_serverFn/*', (req, res) => {
-  res.json([]);
+  res.json({ result: [] });
 });
 app.post('/_serverFn/*', (req, res) => {
-  res.json({ success: true });
+  res.json({ result: { success: true } });
 });
 
 // --- Static files ---

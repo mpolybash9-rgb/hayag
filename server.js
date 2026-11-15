@@ -39,13 +39,17 @@ function getToken(req) {
 // --- Visit tracking (save to Supabase using anon key - RLS allows anon inserts) ---
 app.post('/api/public/visit', async (req, res) => {
   try {
-    const { session_id, event_type, page, data } = req.body;
+    const { session_id, event_type, page, data, label, path } = req.body;
+    const visitPage = path || page || req.headers.referer || '/';
+    const visitLabel = label || (data && data.label) || session_id || 'زائر';
     await supabaseRequest('/rest/v1/visitor_events', {
       method: 'POST',
       body: {
         session_id: session_id || req.ip,
         event_type: event_type || 'visit',
-        page: page || req.headers.referer || '/',
+        page: visitPage,
+        path: visitPage,
+        label: visitLabel,
         data: data || {},
       },
     });

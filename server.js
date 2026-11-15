@@ -73,7 +73,7 @@ app.get('/api/admin/users', async (req, res) => {
 
   const result = await supabaseRequest(
     '/rest/v1/user_roles?role=eq.viewer&select=user_id,role,created_at',
-    { useServiceKey: true }
+    { token }
   );
   if (!result.ok) return res.json([]);
 
@@ -83,7 +83,7 @@ app.get('/api/admin/users', async (req, res) => {
 
   const profiles = await supabaseRequest(
     `/rest/v1/admin_profiles?id=in.(${userIds.join(',')})&select=id,username,display_name`,
-    { useServiceKey: true }
+    { token }
   );
   const profileMap = {};
   (profiles.data || []).forEach(p => { profileMap[p.id] = p; });
@@ -119,6 +119,10 @@ app.post('/api/admin/users', async (req, res) => {
     return res.status(400).json({ error: 'Username and password required' });
   }
 
+  if (!SUPABASE_SERVICE_KEY) {
+    return res.status(500).json({ error: 'SUPABASE_SERVICE_KEY not configured on server' });
+  }
+
   const email = `${username.trim().toLowerCase()}@viewer.local`;
   const createResult = await supabaseRequest('/auth/v1/admin/users', {
     method: 'POST',
@@ -134,13 +138,13 @@ app.post('/api/admin/users', async (req, res) => {
 
   await supabaseRequest('/rest/v1/user_roles', {
     method: 'POST',
-    useServiceKey: true,
+    token,
     body: { user_id: newUserId, role: 'viewer' },
   });
 
   await supabaseRequest('/rest/v1/admin_profiles', {
     method: 'POST',
-    useServiceKey: true,
+    token,
     body: { id: newUserId, username: username.trim(), display_name: displayName || username.trim() },
   });
 
@@ -167,16 +171,18 @@ app.delete('/api/admin/users/:id', async (req, res) => {
 
   await supabaseRequest(`/rest/v1/user_roles?user_id=eq.${targetId}`, {
     method: 'DELETE',
-    useServiceKey: true,
+    token,
   });
   await supabaseRequest(`/rest/v1/admin_profiles?id=eq.${targetId}`, {
     method: 'DELETE',
-    useServiceKey: true,
+    token,
   });
-  await supabaseRequest(`/auth/v1/admin/users/${targetId}`, {
-    method: 'DELETE',
-    useServiceKey: true,
-  });
+  if (SUPABASE_SERVICE_KEY) {
+    await supabaseRequest(`/auth/v1/admin/users/${targetId}`, {
+      method: 'DELETE',
+      useServiceKey: true,
+    });
+  }
 
   res.json({ ok: true });
 });

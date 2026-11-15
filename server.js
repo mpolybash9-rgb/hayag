@@ -238,7 +238,8 @@ app.post('/_serverFn/428289e6a95e5fae42a5f252fb057eb6b26d6cb43d7737969ee97f14a7d
   } catch (e) {
     console.error('Order save error:', e.message);
   }
-  res.json({ result: { success: true } });
+  const code = 'ORD-' + Date.now();
+  res.json({ result: { success: true, code } });
 });
 
 // List orders: GET /_serverFn/9418c3d2...

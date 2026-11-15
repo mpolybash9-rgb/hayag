@@ -219,9 +219,44 @@ app.get('/api/admin/stats', async (req, res) => {
   });
 });
 
-// --- TanStack server function stubs (return empty to prevent errors) ---
-app.all('/_serverFn/*', (req, res) => {
+// --- TanStack server function handlers ---
+// Order submission: POST /_serverFn/428289e6...
+app.post('/_serverFn/428289e6a95e5fae42a5f252fb057eb6b26d6cb43d7737969ee97f14a7d64be0', async (req, res) => {
+  try {
+    const body = req.body;
+    await supabaseRequest('/rest/v1/visitor_events', {
+      method: 'POST',
+      body: {
+        session_id: 'order-' + Date.now(),
+        event_type: 'order',
+        page: '/register',
+        path: '/register',
+        label: 'طلب ساعة جديد',
+        data: typeof body === 'object' ? body : { raw: String(body) },
+      },
+    });
+  } catch (e) {
+    console.error('Order save error:', e.message);
+  }
+  res.json({ success: true });
+});
+
+// List orders: GET /_serverFn/9418c3d2...
+app.get('/_serverFn/9418c3d23273642507e6287ab82fd85c0bb33aa9622d516d57217a46084afb41', async (req, res) => {
+  const token = getToken(req);
+  const result = await supabaseRequest(
+    "/rest/v1/visitor_events?event_type=eq.order&select=id,data,created_at&order=created_at.desc&limit=50",
+    { token: token || undefined }
+  );
+  res.json(result.ok && Array.isArray(result.data) ? result.data : []);
+});
+
+// Dashboard server functions - return safe defaults
+app.get('/_serverFn/*', (req, res) => {
   res.json([]);
+});
+app.post('/_serverFn/*', (req, res) => {
+  res.json({ success: true });
 });
 
 // --- Static files ---

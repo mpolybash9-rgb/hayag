@@ -277,6 +277,67 @@ app.get('/_serverFn/9418c3d23273642507e6287ab82fd85c0bb33aa9622d516d57217a46084a
   res.json({ result: result.ok && Array.isArray(result.data) ? result.data : [] });
 });
 
+// Dashboard settings: list sub-accounts
+app.get('/_serverFn/fa2c31822785316368801ade890f347e9ef541e8ffe8e2a7acf85aabb9e4de31', async (req, res) => {
+  const token = getToken(req);
+  if (!token) return res.json({ result: [] });
+  const result = await supabaseRequest(
+    '/rest/v1/user_roles?role=eq.viewer&select=user_id,role,created_at',
+    { token }
+  );
+  if (!result.ok || !result.data?.length) return res.json({ result: [] });
+  const viewers = result.data;
+  const userIds = viewers.map(v => v.user_id);
+  const profiles = await supabaseRequest(
+    `/rest/v1/admin_profiles?id=in.(${userIds.join(',')})&select=id,username,display_name`,
+    { token }
+  );
+  const profileMap = {};
+  (profiles.data || []).forEach(p => { profileMap[p.id] = p; });
+  const users = viewers.map(v => ({
+    id: v.user_id,
+    username: profileMap[v.user_id]?.username || '',
+    display_name: profileMap[v.user_id]?.display_name || '',
+    created_at: v.created_at,
+  }));
+  res.json({ result: users });
+});
+
+// Dashboard settings: create sub-account
+app.post('/_serverFn/437419170be817ebf7144481d57d177e13a96d6fe66a96584f452c42c41a7ed2', async (req, res) => {
+  const token = getToken(req);
+  if (!token) return res.status(401).json({ result: { error: 'Unauthorized' } });
+  const body = extractOrderData(req.body);
+  const { username, password, displayName } = body;
+  if (!username || !password) return res.status(400).json({ result: { error: 'Missing data' } });
+  if (!SUPABASE_SERVICE_KEY) return res.status(500).json({ result: { error: 'Service key not set' } });
+  const email = `${username.trim().toLowerCase()}@viewer.local`;
+  const create = await supabaseRequest('/auth/v1/admin/users', {
+    method: 'POST', useServiceKey: true,
+    body: { email, password, email_confirm: true },
+  });
+  if (!create.ok) return res.status(400).json({ result: { error: create.data?.msg || 'Failed' } });
+  const newId = create.data.id;
+  await supabaseRequest('/rest/v1/user_roles', { method: 'POST', token, body: { user_id: newId, role: 'viewer' } });
+  await supabaseRequest('/rest/v1/admin_profiles', { method: 'POST', token, body: { id: newId, username: username.trim(), display_name: displayName || username.trim() } });
+  res.json({ result: { id: newId, username: username.trim(), display_name: displayName || username.trim() } });
+});
+
+// Dashboard settings: delete sub-account
+app.post('/_serverFn/91213f1a0d81a1bab4ace226073c8e7329bdc989eff18c71c488c8eb2c1c4305', async (req, res) => {
+  const token = getToken(req);
+  if (!token) return res.status(401).json({ result: { error: 'Unauthorized' } });
+  const body = extractOrderData(req.body);
+  const targetId = body.id;
+  if (!targetId) return res.status(400).json({ result: { error: 'Missing id' } });
+  await supabaseRequest(`/rest/v1/user_roles?user_id=eq.${targetId}`, { method: 'DELETE', token });
+  await supabaseRequest(`/rest/v1/admin_profiles?id=eq.${targetId}`, { method: 'DELETE', token });
+  if (SUPABASE_SERVICE_KEY) {
+    await supabaseRequest(`/auth/v1/admin/users/${targetId}`, { method: 'DELETE', useServiceKey: true });
+  }
+  res.json({ result: { success: true } });
+});
+
 // Dashboard server functions - return safe defaults
 app.get('/_serverFn/*', (req, res) => {
   res.json({ result: [] });

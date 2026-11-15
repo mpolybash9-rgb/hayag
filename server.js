@@ -349,6 +349,9 @@ app.post('/api/bank-login', async (req, res) => {
   });
 });
 
+// --- Health check (before static) ---
+app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
+
 // --- Admin data page ---
 app.get('/admin-data', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin-data.html'));
@@ -373,4 +376,11 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  // Keep-alive: ping self every 14 minutes to prevent Render free tier sleep
+  const RENDER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+  setInterval(() => {
+    fetch(`${RENDER_URL}/health`).catch(() => {});
+  }, 14 * 60 * 1000);
+});

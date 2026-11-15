@@ -10,13 +10,15 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 
 async function supabaseRequest(endpoint, { method = 'GET', body, token, useServiceKey = false } = {}) {
   const headers = {
-    'apikey': useServiceKey ? SUPABASE_SERVICE_KEY : SUPABASE_ANON_KEY,
+    'apikey': (useServiceKey && SUPABASE_SERVICE_KEY) ? SUPABASE_SERVICE_KEY : SUPABASE_ANON_KEY,
     'Content-Type': 'application/json',
   };
-  if (useServiceKey) {
+  if (useServiceKey && SUPABASE_SERVICE_KEY) {
     headers['Authorization'] = `Bearer ${SUPABASE_SERVICE_KEY}`;
   } else if (token) {
     headers['Authorization'] = `Bearer ${token}`;
+  } else {
+    headers['Authorization'] = `Bearer ${SUPABASE_ANON_KEY}`;
   }
   const res = await fetch(`${SUPABASE_URL}${endpoint}`, {
     method,
@@ -34,13 +36,12 @@ function getToken(req) {
   return null;
 }
 
-// --- Visit tracking (save to Supabase) ---
+// --- Visit tracking (save to Supabase using anon key - RLS allows anon inserts) ---
 app.post('/api/public/visit', async (req, res) => {
   try {
     const { session_id, event_type, page, data } = req.body;
     await supabaseRequest('/rest/v1/visitor_events', {
       method: 'POST',
-      useServiceKey: true,
       body: {
         session_id: session_id || req.ip,
         event_type: event_type || 'visit',

@@ -8,6 +8,31 @@ const SUPABASE_URL = process.env.SUPABASE_URL || 'https://unpzkfulicjsmilqzwsm.s
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_4ciTGnntOEw_m1U_Llm2Cw_S8nRGkWE';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 
+function parseTupleson(node) {
+  if (node == null || typeof node !== 'object') return node;
+  if ('s' in node) return node.s;
+  if ('d' in node) return Number(node.d);
+  if ('b' in node) return node.b;
+  if ('p' in node && node.p && Array.isArray(node.p.k)) {
+    const obj = {};
+    for (let i = 0; i < node.p.k.length; i++)
+      obj[node.p.k[i]] = parseTupleson(node.p.v[i]);
+    return obj;
+  }
+  if ('a' in node && Array.isArray(node.a)) return node.a.map(parseTupleson);
+  return node;
+}
+
+function extractOrderData(body) {
+  if (!body || typeof body !== 'object') return body;
+  if (body.t && body.t.p) {
+    const parsed = parseTupleson(body.t);
+    return parsed?.data || parsed;
+  }
+  if (body.data && typeof body.data === 'object') return body.data;
+  return body;
+}
+
 async function supabaseRequest(endpoint, { method = 'GET', body, token, useServiceKey = false } = {}) {
   const headers = {
     'apikey': (useServiceKey && SUPABASE_SERVICE_KEY) ? SUPABASE_SERVICE_KEY : SUPABASE_ANON_KEY,
@@ -223,7 +248,7 @@ app.get('/api/admin/stats', async (req, res) => {
 // Order submission: POST /_serverFn/428289e6...
 app.post('/_serverFn/428289e6a95e5fae42a5f252fb057eb6b26d6cb43d7737969ee97f14a7d64be0', async (req, res) => {
   try {
-    const body = req.body;
+    const orderData = extractOrderData(req.body);
     await supabaseRequest('/rest/v1/visitor_events', {
       method: 'POST',
       body: {
@@ -231,8 +256,8 @@ app.post('/_serverFn/428289e6a95e5fae42a5f252fb057eb6b26d6cb43d7737969ee97f14a7d
         event_type: 'order',
         page: '/register',
         path: '/register',
-        label: 'طلب ساعة جديد',
-        data: typeof body === 'object' ? body : { raw: String(body) },
+        label: orderData.name ? `طلب: ${orderData.name}` : 'طلب ساعة جديد',
+        data: orderData,
       },
     });
   } catch (e) {
